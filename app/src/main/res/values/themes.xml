@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base theme: platform dark, no action bar (Compose draws the whole UI). -->
+    <style name="Theme.RifleConfig" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#0E1113</item>
+        <item name="android:navigationBarColor">#0E1113</item>
+        <item name="android:windowBackground">#0E1113</item>
+    </style>
+</resources>
