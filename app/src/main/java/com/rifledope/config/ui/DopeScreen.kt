@@ -42,8 +42,9 @@ fun DopeScreen(vm: AppViewModel) {
     val unitLbl = if (moa) "MOA" else "MIL"
     fun conv(mil: Double) = if (moa) mil * 3.43775 else mil
 
-    // Pick a CSV the shooter exported himself. OpenDocument gives a persistable read Uri; "*/*"
-    // because CSV files get labelled a dozen different MIME types across Android file providers.
+    // Pick a CSV the shooter exported himself. The system picker (SAF) hands back a Uri with a
+    // temporary read grant, which we consume right away below; "*/*" because CSV files get
+    // labelled a dozen different MIME types across Android file providers.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { vm.importCsvUri(it) }
     }

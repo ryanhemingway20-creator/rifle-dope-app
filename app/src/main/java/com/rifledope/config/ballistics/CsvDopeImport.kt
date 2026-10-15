@@ -73,6 +73,13 @@ object CsvDopeImport {
         return "mil"
     }
 
+    /** True if the header actually names an angular/linear unit, so a defaulted "mil" gets flagged. */
+    private fun angLabeled(header: String): Boolean {
+        val n = norm(header); val low = header.lowercase()
+        return "moa" in n || "mil" in n || "mrad" in n || "cm" in n ||
+            "inch" in n || Regex("\\bin\\b").containsMatchIn(low) || n.endsWith("in")
+    }
+
     private fun windMphOf(header: String, default: Int): Double {
         val m = Regex("(\\d+(?:\\.\\d+)?)\\s*mph").find(header.lowercase())
         return m?.groupValues?.get(1)?.toDoubleOrNull() ?: default.toDouble()
@@ -116,6 +123,9 @@ object CsvDopeImport {
 
         val runit = rangeUnitOf(headers[ri])
         val eunit = angUnitOf(headers[ei])
+        if (!angLabeled(headers[ei])) warnings.add(
+            "Elevation column \"" + headers[ei] + "\" has no unit label - assumed MIL. " +
+                "If your dope is in MOA or inches it will read wrong here; check the preview.")
         val wunit = if (wi >= 0) angUnitOf(headers[wi]) else "mil"
         val wmph = if (wi >= 0) windMphOf(headers[wi], windDef) else windDef.toDouble()
         if (wi < 0) warnings.add("No wind column found - wind holds set to 0.")

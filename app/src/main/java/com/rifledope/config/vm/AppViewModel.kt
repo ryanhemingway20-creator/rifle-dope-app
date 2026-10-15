@@ -82,13 +82,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun pushToBoard() {
         if (connState.value != ConnState.CONNECTED) { emit("Connect to a board first"); return }
         _busy.value = true
+        val imp = _imported.value
         viewModelScope.launch {
             // Send exactly what's on screen: imported rows if a CSV is applied, else the solved
-            // table. Fall back to a fresh solve only if the table hasn't been built yet.
+            // table. When imported, the SET header's grid must come from the import (not the
+            // profile, which the shooter may have edited since) so base/step match the rows'
+            // yardages. Fall back to a fresh solve only if the table hasn't been built yet.
             val rows = _dope.value
+            val prof = if (imp != null) _active.value.copy(base = imp.base, step = imp.step)
+                       else _active.value
             val msg = withContext(Dispatchers.Default) {
                 if (rows.isEmpty()) Protocol.computeAndEncodeSet(_active.value)
-                else Protocol.encodeSet(_active.value, rows)
+                else Protocol.encodeSet(prof, rows)
             }
             ble.send(msg)
         }
