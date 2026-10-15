@@ -187,11 +187,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val solved = Solver.solve(p.solveInput())
                     CsvDopeImport.parse(
                         text = text,
-                        windDef = p.windDef,
                         base = p.base,
                         step = p.step,
                         maxRows = p.rows,
-                        solverTof = tofLookup(solved),
+                        solved = solved,
                     )
                 }
                 _pendingImport.value = result
@@ -228,21 +227,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val rows = withContext(Dispatchers.Default) { Solver.solve(_active.value.solveInput()) }
             _dope.value = rows
-        }
-    }
-
-    /** Interpolated time-of-flight over the solved grid, to fill CSV rows that carry no TOF. */
-    private fun tofLookup(solved: List<DopeRow>): (Int) -> Double {
-        val pts = solved.filter { it.tof > 0 }.map { it.yd to it.tof }
-        return fn@{ yd: Int ->
-            if (pts.isEmpty()) return@fn 0.0
-            if (yd <= pts.first().first) return@fn pts.first().second
-            if (yd >= pts.last().first) return@fn pts.last().second
-            for (j in 1 until pts.size) if (yd <= pts[j].first) {
-                val (x0, y0) = pts[j - 1]; val (x1, y1) = pts[j]
-                return@fn y0 + (y1 - y0) * (yd - x0) / (x1 - x0).toDouble()
-            }
-            pts.last().second
         }
     }
 

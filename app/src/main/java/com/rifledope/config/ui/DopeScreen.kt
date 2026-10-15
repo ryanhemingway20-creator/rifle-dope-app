@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
@@ -124,17 +126,19 @@ private fun ImportReviewDialog(
         onDismissRequest = onCancel,
         title = { Text("Import this DOPE?") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Line("Range column", "${imp.rangeCol} (${imp.rangeUnit})")
-                Line("Elevation column", "${imp.elevCol} (${imp.elevUnit})")
-                Line("Wind column", imp.windCol?.let { "$it (${imp.windUnit}, ${fmt(imp.windMph)} mph)" } ?: "none")
-                Line("Time of flight", imp.tofCol ?: "computed")
+                Line("Elevation", "${imp.elevCol} (${imp.elevUnit})")
+                Line("Wind holds", if (imp.windComputed) "computed" else (imp.windCol ?: "none"))
+                Line("Time of flight", if (imp.tofComputed) "computed" else (imp.tofCol ?: "computed"))
                 Line("Rows on grid", "${imp.rows.size} @ ${imp.base}/${imp.step} yd, to ${imp.srcMaxRangeYd} yd")
                 if (imp.warnings.isNotEmpty()) {
                     Spacer(Modifier.height(8.dp))
+                    Text("Heads up:", fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium)
                     imp.warnings.forEach {
                         Text("• $it", style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 Spacer(Modifier.height(10.dp))
@@ -159,9 +163,6 @@ private fun ImportReviewDialog(
 /** First few + last row of the imported grid, so a long table doesn't overflow the dialog. */
 private fun previewRows(rows: List<DopeRow>): List<DopeRow> =
     if (rows.size <= 5) rows else rows.take(4) + rows.last()
-
-private fun fmt(v: Double): String =
-    if (v == v.toLong().toDouble()) v.toLong().toString() else String.format(Locale.US, "%.1f", v)
 
 @Composable
 private fun Line(label: String, value: String) {
