@@ -1,8 +1,12 @@
 package com.rifledope.config.vm
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.rifledope.config.ballistics.CsvDopeImport
+import com.rifledope.config.ballistics.CsvImport
+import com.rifledope.config.ballistics.CsvImportException
 import com.rifledope.config.ballistics.DopeRow
 import com.rifledope.config.ballistics.Solver
 import com.rifledope.config.ble.BleManager
@@ -47,6 +51,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _dope = MutableStateFlow<List<DopeRow>>(emptyList())
     val dope: StateFlow<List<DopeRow>> = _dope.asStateFlow()
 
+    // GeoBallistics CSV import. When _imported is non-null the dope table came from a CSV the
+    // shooter exported himself (not the on-phone solver), so recompute() must leave it alone.
+    // _pendingImport is a parsed-but-unconfirmed import that drives the review dialog, so the
+    // shooter sees the detected columns/units before anything replaces the table.
+    private val _imported = MutableStateFlow<CsvImport?>(null)
+    val imported: StateFlow<CsvImport?> = _imported.asStateFlow()
+    private val _pendingImport = MutableStateFlow<CsvImport?>(null)
+    val pendingImport: StateFlow<CsvImport?> = _pendingImport.asStateFlow()
+
     private val _status = MutableStateFlow<BoardStatus?>(null)
     val status: StateFlow<BoardStatus?> = _status.asStateFlow()
 
@@ -69,8 +82,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun pushToBoard() {
         if (connState.value != ConnState.CONNECTED) { emit("Connect to a board first"); return }
         _busy.value = true
+        val imp = _imported.value
         viewModelScope.launch {
-            val msg = withContext(Dispatchers.Default) { Protocol.computeAndEncodeSet(_active.value) }
+            // Send exactly what's on screen: imported rows if a CSV is applied, else the solved
+            // table. When imported, the SET header's grid must come from the import (not the
+            // profile, which the shooter may have edited since) so base/step match the rows'
+            // yardages. Fall back to a fresh solve only if the table hasn't been built yet.
+            val rows = _dope.value
+            val prof = if (imp != null) _active.value.copy(base = imp.base, step = imp.step)
+                       else _active.value
+            val msg = withContext(Dispatchers.Default) {
+                if (rows.isEmpty()) Protocol.computeAndEncodeSet(_active.value)
+                else Protocol.encodeSet(prof, rows)
+            }
             ble.send(msg)
         }
     }
@@ -88,7 +112,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         when {
             verb == "CFG" -> {
                 val merged = Protocol.parseCfg(body, _active.value)
-                setActiveProfile(merged); _editEpoch.value++; recompute(); persist()
+                setActiveProfile(merged); _editEpoch.value++
+                _imported.value = null; _pendingImport.value = null
+                recompute(); persist()
                 emit("Loaded settings from board")
             }
             verb == "ST" -> _status.value = Protocol.parseStatus(body)
@@ -115,7 +141,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun selectProfile(i: Int) {
         if (i !in _profiles.value.indices) return
         _activeIdx.value = i; _active.value = _profiles.value[i]
-        store.setActiveIndex(i); _editEpoch.value++; recompute()
+        store.setActiveIndex(i); _editEpoch.value++
+        _imported.value = null; _pendingImport.value = null   // a CSV import belongs to one load
+        recompute()
     }
 
     fun addProfile() {
@@ -131,10 +159,71 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _profiles.value = list
         val ni = _activeIdx.value.coerceIn(0, list.size - 1)
         _activeIdx.value = ni; _active.value = list[ni]
-        store.setActiveIndex(ni); _editEpoch.value++; persist(); recompute()
+        store.setActiveIndex(ni); _editEpoch.value++
+        _imported.value = null; _pendingImport.value = null
+        persist(); recompute()
+    }
+
+    // ---- GeoBallistics CSV import ----
+    /** Read a CSV the shooter picked from storage, then parse + stage it for review. */
+    fun importCsvUri(uri: Uri) {
+        viewModelScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                try {
+                    getApplication<Application>().contentResolver.openInputStream(uri)
+                        ?.use { it.readBytes().toString(Charsets.UTF_8) }
+                } catch (e: Exception) { null }
+            }
+            if (text.isNullOrBlank()) emit("Couldn't open that file") else importCsv(text)
+        }
+    }
+
+    /** Parse a CSV the shooter exported from GeoBallistics; on success, stage it for review. */
+    fun importCsv(text: String) {
+        val p = _active.value
+        viewModelScope.launch {
+            try {
+                val result = withContext(Dispatchers.Default) {
+                    val solved = Solver.solve(p.solveInput())
+                    CsvDopeImport.parse(
+                        text = text,
+                        base = p.base,
+                        step = p.step,
+                        maxRows = p.rows,
+                        solved = solved,
+                    )
+                }
+                _pendingImport.value = result
+            } catch (e: CsvImportException) {
+                emit(e.message ?: "Couldn't read that CSV")
+            } catch (e: Exception) {
+                emit("Couldn't read that CSV: " + (e.message ?: e.javaClass.simpleName))
+            }
+        }
+    }
+
+    /** Confirm the staged import: it becomes the live dope table (sent as-is to the board). */
+    fun applyImport() {
+        val pend = _pendingImport.value ?: return
+        _imported.value = pend
+        _dope.value = pend.rows
+        _pendingImport.value = null
+        emit("Imported " + pend.rows.size + " rows from CSV")
+    }
+
+    /** Dismiss the review dialog without applying. */
+    fun cancelImport() { _pendingImport.value = null }
+
+    /** Drop an applied import and go back to the on-phone solved table. */
+    fun clearImport() {
+        _imported.value = null
+        _pendingImport.value = null
+        recompute()
+        emit("Back to computed DOPE")
     }
 
     private fun recompute() {
+        if (_imported.value != null) return   // imported dope stands until the shooter clears it
         viewModelScope.launch {
             val rows = withContext(Dispatchers.Default) { Solver.solve(_active.value.solveInput()) }
             _dope.value = rows
